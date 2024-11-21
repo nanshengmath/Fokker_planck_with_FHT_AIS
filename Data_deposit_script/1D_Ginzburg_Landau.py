@@ -8,19 +8,18 @@ rank = comm.Get_rank()
 size = comm.Get_size()
 
 # Given constants
-n = 8
-d = n**2
-h = 1 / (n + 1)
-λ = 0.02
-β0 = 7  # High temperature warm-up 
+d = 64
+h = 1 / (d + 1)
+λ = 0.01
+β0 = 3  # High temperature warm-up 
 
-β = 14  # Low temperature
-N_AIS = 200 
+β = 6  # Low temperature
+N_AIS = 100 
 dβ = (β - β0) / N_AIS
 V_grid = np.arange(β0,β+dβ,dβ) / β  # grid points used to compute effective potential
 
 T = 1
-scale = 200
+scale = 120 # 120 for d = 64
 dt = 0.0005 * scale / β0
 N = int(T*scale/dt)  # Interested in T = 1
 dt = T*scale/N  # Correct for small deviation
@@ -54,37 +53,31 @@ if rank == 0:
     if os.path.exists(data_path):
         os.remove(data_path)
 
-local_samples_β0 = np.empty((0, n + 2, n + 2))
+local_samples_β0 = np.empty((0, d + 2))
 if l_AIS:
-    local_samples = np.empty((0, n + 2, n + 2))
+    local_samples = np.empty((0, d + 2))
 
 def padding(U):
     if np.size(U.shape) == 1:
         U = U[np.newaxis,:]
     dim0, dim1 = U.shape
-    dim2 = round(np.sqrt(dim1))
 
-    U_tmp = np.zeros((dim0, dim2+2, dim2+2))
-    U_tmp[:,1:-1,1:-1] = U.reshape((dim0, dim2, dim2))
+    U_tmp = np.zeros((dim0, dim1+2))
+    U_tmp[:,1:-1] = U
     return U_tmp
 
-# 2D Ginzburg Landau
 def V(U, AIS_step=0):
-    U = padding(U)
     
-    return V_grid[AIS_step] * β / d * ( λ/h**2/2 * (
-        np.sum((U - np.roll(U, 1, axis=1))**2, axis = (1,2)) + np.sum((U - np.roll(U, -1, axis=1))**2, axis = (1,2))
-        + np.sum((U - np.roll(U, 1, axis=2))**2, axis = (1,2)) + np.sum((U - np.roll(U, -1, axis=2))**2, axis = (1,2))
-    ) + np.sum(((1 - U**2)**2)[:,1:-1,1:-1], axis = (1,2)) /4/λ )
+    U = padding(U)
 
+    return V_grid[AIS_step] * β / d * ( λ/h**2/2 * np.sum((U - np.roll(U, 1, axis = 1))**2, axis = 1) + np.sum(((1 - U**2)**2)[:, 1:-1], axis = 1) /4/λ )
+        
 def V_grad(U, AIS_step=0):
     
     U = padding(U)
-
-    return V_grid[AIS_step] * β / d * ( λ/h**2 * (
-        4*U - np.roll(U, 1, axis=1) - np.roll(U, -1, axis=1) - np.roll(U, 1, axis=2) - np.roll(U, -1, axis=2)
-    ) - U * (1 - U**2) /λ )[:,1:-1,1:-1].reshape((U.shape[0], -1))
-
+    
+    return V_grid[AIS_step] * β / d * ( λ/h**2 * (2*U - np.roll(U, 1, axis = 1) - np.roll(U, -1, axis = 1)) - U * (1 - U**2) /λ ) [:, 1:-1]
+    
 def Langevin_step(U,V,V_grad,l_MALA=True):
 
     if np.size(U.shape) == 1:
@@ -155,24 +148,25 @@ for iteration in range(30//size + 1):
     for _ in range(N):
         U, count_ = Langevin_step(U,V,V_grad,l_MALA)
         count += count_
-    
+
     print(f'Saved data at rank {rank} and iteration {iteration}, total violation is {count}')
-    
-    U_tmp = np.zeros((BATCH_SIZE, n + 2, n + 2))
-    U_tmp[:,1:-1,1:-1] = U.reshape((BATCH_SIZE, n, n))    
+
+    U_tmp = np.zeros((BATCH_SIZE, d + 2))
+    U_tmp[:,1:-1] = U  
     local_samples_β0 = np.concatenate((local_samples_β0, U_tmp), axis=0)
-        
+
+    # Save the accumulated data
     if l_AIS:
         
         for AIS_step in range(1,N_AIS+1):
-    
+
             V_AIS_tmp = lambda U : V(U, AIS_step)
             V_grad_AIS_tmp = lambda U : V_grad(U, AIS_step)
                 
             for i in range(BATCH_SIZE):
-    
+
                 candid = np.delete(np.arange(BATCH_SIZE), i)
-    
+
                 # MALA and Snooker
                 for _ in range(N_AIS_MALA):
                     U_, _ = Langevin_step(U[i-1,:],V_AIS_tmp,V_grad_AIS_tmp,l_MALA) 
@@ -180,22 +174,22 @@ for iteration in range(30//size + 1):
                     U_tmp[i-1,:] = U_
         
                     U_tmp = Snooker(U_tmp,V_AIS_tmp,i,candid)
-    
+
                 # Birth death
                 U = BD(U_tmp,i,candid)
-    
-        U_tmp = np.zeros((BATCH_SIZE, n + 2, n + 2))
-        U_tmp[:,1:-1,1:-1] = U.reshape((BATCH_SIZE, n, n))  
+
+        U_tmp = np.zeros((BATCH_SIZE, d + 2))
+        U_tmp[:,1:-1] = U        
         local_samples = np.concatenate((local_samples, U_tmp), axis=0)
-    
+
 all_samples = comm.gather(local_samples, root=0)
 all_samples_β0 = comm.gather(local_samples_β0, root=0)
 
 if rank == 0:
-    
+
     all_samples = np.concatenate(all_samples, axis=0)
     all_samples_β0 = np.concatenate(all_samples_β0, axis=0)
-
+    
     # Save the accumulated data
     if l_AIS:
         np.savez(data_path, samples=all_samples, hyperparameters=hyperparameters)
@@ -204,19 +198,19 @@ if rank == 0:
 
     print(f'total number of violation is {count}')
     
-    # Visualization of the (n/2,n/2)-th marginal distribution
-    samples_1_mar = all_samples_β0[:, round(n/2), round(n/2)]  # Extract the d/2-th bit from each sample
+    # Visualization of the (d/2)-th marginal distribution
+    samples_1_mar = all_samples_β0[:, round(d/2)]  # Extract the d/2-th bit from each sample
     plt.hist(samples_1_mar, bins=50, density=True)
-    plt.title(f"{round(n/2),round(n/2)}-th Marginal Distribution")
+    plt.title("8-th Marginal Distribution")
     plt.savefig('test1.png',bbox_inches='tight')
     plt.clf()
     
     if l_AIS:
         
         # Visualization of the (d/2)-th marginal distribution
-        samples_1_mar = all_samples[:, round(n/2), round(n/2)]  # Extract the (n/2,n/2)-th bit from each sample
+        samples_1_mar = all_samples[:, round(d/2)]  # Extract the d/2-th bit from each sample
         plt.hist(samples_1_mar, bins=50, density=True)
-        plt.title(f"{round(n/2),round(n/2)}-th Marginal Distribution")
+        plt.title(f"{round(d/2)}-th Marginal Distribution")
         plt.savefig('test2.png',bbox_inches='tight')
         plt.clf()
         
