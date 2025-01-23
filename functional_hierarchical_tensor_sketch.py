@@ -264,7 +264,9 @@ def hier_tensor_sketch(y, L, d, deg, r, s=None, debug=False, nbhd_fun=None, nbhd
                     idx_nbhd = [k - 2, k - 1, k + 1, k + 2]
                 else:
                     idx_nbhd = nbhd_fun((k, l), L)
-                idx_nbhd = [x for x in idx_nbhd if 1 <= x <= 2 ** L]
+                # idx_nbhd = [x for x in idx_nbhd if 1 <= x <= 2 ** L]
+                idx_nbhd = [x if 1 <= x <= 2 ** L else x + 2**L if x <= 0 else x - 2**L for x in idx_nbhd]
+                
                 mode_nbhd = generate_vectors(len(idx_nbhd), I_v_dict[node])
                 T_dict[node] = (mode_nbhd, idx_nbhd)
                 mode_mid = np.arange(0, n).reshape(-1, 1)
@@ -277,11 +279,10 @@ def hier_tensor_sketch(y, L, d, deg, r, s=None, debug=False, nbhd_fun=None, nbhd
                 if nbhd_fun is None:
                     idx_nbhd = [2 ** (L - l) * (k - 1) - 1, 2 ** (L - l) * (k - 1), 2 ** (L - l) * k + 1,
                                 2 ** (L - l) * k + 2]
-                    idx_nbhd += [2 ** (L - l) * (k - 3), 2 ** (L - l) * (k - 2), 2 ** (L - l) * (k + 1),
-                                 2 ** (L - l) * (k + 2)]
                 else:
                     idx_nbhd = nbhd_fun((k, l), L)
-                idx_nbhd = [x for x in idx_nbhd if 1 <= x <= 2 ** L]
+                # idx_nbhd = [x for x in idx_nbhd if 1 <= x <= 2 ** L]
+                idx_nbhd = [x if 1 <= x <= 2 ** L else x + 2**L if x <= 0 else x - 2**L for x in idx_nbhd]
 
                 mode_nbhd = generate_vectors(len(idx_nbhd), I_v_dict[node])
                 T_dict[node] = (mode_nbhd, idx_nbhd)
@@ -315,24 +316,24 @@ def hier_tensor_sketch(y, L, d, deg, r, s=None, debug=False, nbhd_fun=None, nbhd
                     extra_function_B = []
                     extra_function_B.append(None)
                     extra_function_B.append(
-                        lambda x: average_fourier(x, child(node, 1), L, 'self', level=min([L - l - 1, 3]), deg=1))
+                        lambda x: average_fourier(x, child(node, 1), L, 'self', level=min([L - l - 1, 2]), deg=2))
                     extra_function_B.append(
-                        lambda x: average_fourier(x, child(node, 2), L, 'self', level=min([L - l - 1, 3]), deg=1))
+                        lambda x: average_fourier(x, child(node, 2), L, 'self', level=min([L - l - 1, 2]), deg=2))
                 else:
                     extra_function_B = None
                 B_dict[node] = sketching_custom(y, [T_dict[node], S_dict[child(node, 1)], S_dict[child(node, 2)]],
                                                 extra_function_B)
 
                 extra_function_A = []
-                extra_function_A.append(lambda x: average_fourier(x, node, L, 'self', level=min([L - l, 3]), deg=1))
+                extra_function_A.append(lambda x: average_fourier(x, node, L, 'self', level=min([L - l, 2]), deg=2))
                 extra_function_A.append(None)
                 A_dict[node] = sketching_custom(y, [S_dict[node], T_dict[node]], extra_function_A)
             else:
                 extra_function_B = []
                 extra_function_B.append(
-                    lambda x: average_fourier(x, child(node, 1), L, 'self', level=min([L - l, 3]), deg=1))
+                    lambda x: average_fourier(x, child(node, 1), L, 'self', level=min([L - l, 2]), deg=2))
                 extra_function_B.append(
-                    lambda x: average_fourier(x, child(node, 2), L, 'self', level=min([L - l, 3]), deg=1))
+                    lambda x: average_fourier(x, child(node, 2), L, 'self', level=min([L - l, 2]), deg=2))
                 B_dict[node] = sketching_custom(y, [S_dict[child(node, 1)], S_dict[child(node, 2)]], extra_function_B)
                 A_dict[node] = None
 
